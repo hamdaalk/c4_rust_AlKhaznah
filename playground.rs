@@ -291,6 +291,8 @@ impl Compiler {
 }
 
 fn main() {
+    //SARA THIS IS JUST A RANDOM TEST SO I CAN RUN THE CODE WE NEED TO CHANGE IT LATER 
+
     let source_code = "
         int main() {
             // This is a comment
