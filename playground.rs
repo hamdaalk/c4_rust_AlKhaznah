@@ -288,6 +288,7 @@ impl Compiler {
             .chars()
             .fold(0, |hash, c| hash.wrapping_mul(31).wrapping_add(c as usize))
     }
+    
 }
 
 fn main() {
