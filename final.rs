@@ -128,6 +128,7 @@ impl Compiler {
         }
     }
 
+
     fn next(&mut self) {
         let mut pp: usize;
 
@@ -280,54 +281,68 @@ impl Compiler {
         }
     }
     
-    fn stmt(&mut self, _lev: usize) {
+    fn stmt(&mut self) {
         let mut a: *mut i32;
         let mut b: *mut i32;
         
         if self.tk == Token::If {
             self.next();
-            if self.tk == ')' { self.next(); } else { eprintln!("{}: open paren expected", self.line); std::process::exit(-1); }
-            self.expr(Assign);
+            if self.tk == ')' { self.next(); } else { eprintln!("{}: open paren expected", self.line); 
+            std::process::exit(-1); }
+            self.expr(Token::Assign);
             
-            if tk == ')' { self.next(); } else { eprintln!("{}: close paren expected", line); std::process::exit(-1); }
-            *e = BZ; e = e.add(1); b = e;
-            stmt();
+            if self.tk == ')' { self.next(); } else { eprintln!("{}: close paren expected", self.line); 
+            std::process::exit(-1); }
+            self.code.push(Opcode::BZ as i64);
+            let b = self.code.len();
+            //*e = Opcode::BZ; let e = e.add(1); b = e;
+            self.stmt();
             
-            if tk == Else {
-                *b = (e.offset(3) as *mut i32) as i32; *e = JMP; e = e.add(1); b = e;
-                next();
-                stmt();
+            if self.tk == Token::Else {
+               // *b = (e.offset(3) as *mut i32) as i32; *e = Opcode::JMP; let e = e.add(1); b = e;
+               self.code[b] = (self.code.len() +2 ) as i64;
+               self.code.push(Opcode::JMP as i64);
+               let jmp = self.code.len();
+               self.code.push(0);
+                self.next();
+                self.stmt();
+            
+            //*b = (e.add(1) as *mut i32) as i32;
+            self.code[jmp] = self.code.len() as i64;
+            } else {
+                self.code[b] = self.code.len() as i64;
             }
+        } else if self.tk == Token::While {
+            self.next();
+           // a = e.add(1);
             
-            *b = (e.add(1) as *mut i32) as i32;
-        } else if tk == While {
-            next();
-            a = e.add(1);
+            if self.tk == '(' { self.next(); } else { eprintln!("{}: open paren expected", self.line); std::process::exit(-1); }
+            self.expr(Token::Assign);
             
-            if tk == '(' { next(); } else { eprintln!("{}: open paren expected", line); std::process::exit(-1); }
-            expr(Assign);
+            if self.tk == ')' { self.next(); } else { eprintln!("{}: close paren expected", self.line); std::process::exit(-1); }
+            //*e = Opcode::BZ; e = e.add(1); b = e;
+            self.code.push(Opcode::BZ);
+            self.stmt();
+            //*e = Opcode::JMP; e = e.add(1); *e = a as i32;
+            self.code.push(Opcode::JMP);
+            //*b = (e.add(1) as *mut i32) as i32;
+        } else if self.tk == Token::Return {
+            self.next();
             
-            if tk == ')' { next(); } else { eprintln!("{}: close paren expected", line); std::process::exit(-1); }
-            *e = BZ; e = e.add(1); b = e;
-            stmt();
-            *e = JMP; e = e.add(1); *e = a as i32;
-            *b = (e.add(1) as *mut i32) as i32;
-        } else if tk == Return {
-            next();
-            
-            if tk != ';' { expr(Assign); }
-            *e = LEV; e = e.add(1);
-            if tk == ';' { next(); } else { eprintln!("{}: semicolon expected", line); std::process::exit(-1); }
-        } else if tk == '{' {
-            next();
-            while tk != '}' { stmt(); }
-            next();
-        } else if tk == ';' {
-            next();
+            if self.tk != ';' { self.expr(Token::Assign); }
+            self.code.push(Opcode::LEV);
+            //*e = Opcode::LEV; e = e.add(1);
+            if self.tk == ';' { self.next(); } else { eprintln!("{}: semicolon expected", self.line); std::process::exit(-1); }
+        } else if self.tk == '{' {
+            self.next();
+            while self.tk != '}' { self.stmt(); }
+            self.next();
+        } else if self.tk == ';' {
+            self.next();
         } else {
-            expr(Assign);
+            self.expr(Token::Assign);
             
-            if tk == ';' { next(); } else { eprintln!("{}: semicolon expected", line); std::process::exit(-1); }
+            if self.tk == ';' { self.next(); } else { eprintln!("{}: semicolon expected", self.line); std::process::exit(-1); }
         }
     }
 }
@@ -336,4 +351,3 @@ impl Compiler {
     fn main() {
  
 }
-
