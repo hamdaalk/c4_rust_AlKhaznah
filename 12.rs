@@ -1,9 +1,14 @@
-use std::collections::HashMap;
+use std::collections::HashMap; 
 use std::fs;
 use std::io;
+
+//use std::collections::HashMap;
+use std::fs::File;
+use std::io::{Read};
 use std::convert::TryInto;
 
-/// same 256 KiB as in the C version
+
+// same 256 KiB as in the C version
 const POOLSZ: usize = 256 * 1024;
 
 //-----------------------------------------------------------------------------
@@ -142,6 +147,10 @@ struct Compiler {
     last_op:   Opcode,
     data_ptr:  usize,
     pc:        usize,
+        // for Option 2 library calls:
+    fd_table:   HashMap<i64, File>,
+    heap_alloc: Vec<u8>,
+    
     // symbol table
     symbols:   HashMap<String, Identifier>,
     // parser state
@@ -174,18 +183,20 @@ impl Compiler {
 
             // our new pools
             sym_pool,
-            text_pool,
             data_pool,
+            text_pool,
             stack_pool,
 
             // existing VM buffers and state
-            data:          Vec::new(),
+            data:         vec![0u8; POOLSZ], // allocate real data memory
             stack:         Vec::new(),
             code:          Vec::new(),
             last_op:       Opcode::NOP,
             data_ptr:      0,
             pc:            0,
-
+            // for Option 2 library calls
+            fd_table:      HashMap::new(),
+            heap_alloc:    Vec::new(),
             // symbol table & parser state
             symbols:       HashMap::new(),
             token:         Token::EOF,
@@ -514,37 +525,42 @@ impl Compiler {
         });
         self.next();
     
-        // 4) Function vs. Global
-        if self.token == Token::Operator('(') {
-            // skip over parameter list
-            self.next(); // consume '('
-            let mut depth = 1;
-            while depth > 0 {
-                match self.token {
-                    Token::Operator('(') => depth += 1,
-                    Token::Operator(')') => depth -= 1,
-                    Token::EOF           => break,
-                    _                    => {}
-                }
-                self.next();
-            }
-            // expect '{'
-            if self.token != Token::Operator('{') {
-                return Err(format!("{}: expected '{{' after function", self.line));
-            }
-            // mark as function
-            if let Some(id) = self.symbols.get_mut(&name) {
-                id.class = Class::Fun;
-            }
-            self.next(); // consume '{'
-    
-            // parse function body
-            while self.token != Token::Operator('}') && self.token != Token::EOF {
-                self.stmt()?;
-            }
-            if self.token == Token::Operator('}') {
-                self.next();
-            }
+// 4) Function vs. Global
+if self.token == Token::Operator('(') {
+    // 4a) consume the '('
+    self.next();
+
+    // 4b) skip everything up to the matching ')'
+    while self.token != Token::Operator(')') && self.token != Token::EOF {
+        self.next();
+    }
+    // 4c) make sure we found a ')'
+    //if self.token != Token::Operator(')') {
+    //    return Err(format!("{}: expected ')' after parameters", self.line));
+    //}
+    // consume that ')'
+    self.next();
+
+    // 4d) now we must see the opening brace
+    if self.token != Token::Operator('{') {
+        return Err(format!("{}: expected '{{' after function parameters", self.line));
+    }
+
+    // mark this symbol as a function
+    if let Some(id) = self.symbols.get_mut(&name) {
+        id.class = Class::Fun;
+    }
+    // consume the '{' and parse the body
+    self.next();
+    while self.token != Token::Operator('}') && self.token != Token::EOF {
+        self.stmt()?;
+    }
+    // consume the '}'
+    if self.token == Token::Operator('}') {
+        self.next();
+    }
+
+
         } else {
             // global‐variable: expect ';'
             if self.token != Token::Operator(';') {
@@ -776,68 +792,42 @@ fn expr(&mut self, level: i32) -> Result<(), String> {
         }
     }
 
-    // ——— 2) INFIX / BINARY ——————————————
-    while self.token.precedence() >= level {
-        let op = self.token;
-        let prec = op.precedence();
-        self.next();
+// ——— 2) INFIX / BINARY ——————————————
+while self.token.precedence() >= level {
+    let op = self.token;
+    let prec = op.precedence();
+    self.next();
 
-        // —— ternary ?: —— 
-        if op == Token::Cond {
-            self.emit(Opcode::BZ);
-            let off1 = self.code.len();
-            self.emit_operand(0);
+    // … ternary and assignment cases …
 
-            self.expr(Precedence::Assign as i32)?;
-            self.emit(Opcode::JMP);
-            let off2 = self.code.len();
-            self.emit_operand(0);
-
-            if self.token != Token::Operator(':') {
-                return Err(format!("{}: expected ':'", self.line));
-            }
-            self.next();
-            self.code[off1] = self.code.len() as i64;
-            self.expr(prec + 1)?;
-            self.code[off2] = self.code.len() as i64;
-            continue;
-        }
-
-        // —— assignment = —— 
-        if op == Token::Assign {
-            // push value & store
-            self.expr(prec)?;
-            match left_type {
-                Type::Char => self.emit(Opcode::SC),
-                _          => self.emit(Opcode::SI),
-            }
-            continue;
-        }
-
-        // —— normal binary —— 
-        self.expr(prec + 1)?;
-        match op {
-            Token::Add => self.emit(Opcode::ADD),
-            Token::Sub => self.emit(Opcode::SUB),
-            Token::Mul => self.emit(Opcode::MUL),
-            Token::Div => self.emit(Opcode::DIV),
-            Token::Mod => self.emit(Opcode::MOD),
-            Token::Shl => self.emit(Opcode::SHL),
-            Token::Shr => self.emit(Opcode::SHR),
-            Token::Lt  => self.emit(Opcode::LT),
-            Token::Gt  => self.emit(Opcode::GT),
-            Token::Le  => self.emit(Opcode::LE),
-            Token::Ge  => self.emit(Opcode::GE),
-            Token::Eq  => self.emit(Opcode::EQ),
-            Token::Ne  => self.emit(Opcode::NE),
-            Token::And => self.emit(Opcode::AND),
-            Token::Xor => self.emit(Opcode::XOR),
-            Token::Or  => self.emit(Opcode::OR),
-            Token::Lan => self.emit(Opcode::AND), // && → logical AND
-            Token::Lor => self.emit(Opcode::OR),  // || → logical OR
-            _ => {}
-        }
+    // —— normal binary —— 
+    // 1) push the *left* operand (in A) onto the VM stack
+    self.emit(Opcode::PSH);
+    // 2) parse the right‐hand side, which will leave its value in A
+    self.expr(prec + 1)?;
+    // 3) now emit the operation, which will pop LHS, combine with RHS in A
+    match op {
+        Token::Add => self.emit(Opcode::ADD),
+        Token::Sub => self.emit(Opcode::SUB),
+        Token::Mul => self.emit(Opcode::MUL),
+        Token::Div => self.emit(Opcode::DIV),
+        Token::Mod => self.emit(Opcode::MOD),
+        Token::Shl => self.emit(Opcode::SHL),
+        Token::Shr => self.emit(Opcode::SHR),
+        Token::Lt  => self.emit(Opcode::LT),
+        Token::Gt  => self.emit(Opcode::GT),
+        Token::Le  => self.emit(Opcode::LE),
+        Token::Ge  => self.emit(Opcode::GE),
+        Token::Eq  => self.emit(Opcode::EQ),
+        Token::Ne  => self.emit(Opcode::NE),
+        Token::And => self.emit(Opcode::AND),
+        Token::Xor => self.emit(Opcode::XOR),
+        Token::Or  => self.emit(Opcode::OR),
+        Token::Lan => self.emit(Opcode::AND), // && 
+        Token::Lor => self.emit(Opcode::OR),  // || 
+        _ => {}
     }
+}
 
     Ok(())
 }
@@ -1127,16 +1117,99 @@ fn run(&mut self) {
         else if op == Opcode::MUL as i64 { a = self.stack.pop().unwrap() *  a; }
         else if op == Opcode::DIV as i64 { a = self.stack.pop().unwrap() /  a; }
         else if op == Opcode::MOD as i64 { a = self.stack.pop().unwrap() %  a; }
+    // ——— library calls (std‐only) ———
 
-        // ——— library calls ———
-        else if op == Opcode::OPEN  as i64 { unimplemented!("OPEN syscall"); }
-        else if op == Opcode::READ  as i64 { unimplemented!("READ syscall"); }
-        else if op == Opcode::CLOS  as i64 { unimplemented!("CLOS syscall"); }
-        else if op == Opcode::PRTF  as i64 { unimplemented!("PRTF syscall"); }
-        else if op == Opcode::MALC  as i64 { unimplemented!("MALC syscall"); }
-        else if op == Opcode::FREE  as i64 { unimplemented!("FREE syscall"); }
-        else if op == Opcode::MSET  as i64 { unimplemented!("MSET syscall"); }
-        else if op == Opcode::MCMP  as i64 { unimplemented!("MCMP syscall"); }
+        else if op == Opcode::OPEN as i64 {
+            // stack: …, ptr_to_path, _flags
+            let _flags = self.stack.pop().unwrap();       // ignore flags
+            let ptr    = self.stack.pop().unwrap() as usize;
+            // Read a nul-terminated string from data_pool
+            let slice = &self.data_pool[ptr..];
+            let end   = slice.iter().position(|&b| b == 0).unwrap_or(slice.len());
+            let path  = String::from_utf8_lossy(&slice[..end]).into_owned();
+            // Open read-only
+            let fd = match std::fs::File::open(&path) {
+                Ok(f) => {
+                    let id = self.fd_table.len() as i64;
+                    self.fd_table.insert(id, f);
+                    id
+                }
+                Err(_) => -1,
+            };
+            a = fd;
+        }
+
+        else if op == Opcode::READ as i64 {
+            // stack: …, fd, buf_ptr, count
+            let count  = self.stack.pop().unwrap() as usize;
+            let bufptr = self.stack.pop().unwrap() as usize;
+            let fd     = self.stack.pop().unwrap();
+            let mut buf = vec![0u8; count];
+            let n = self.fd_table
+                .get_mut(&fd)
+                .and_then(|file| file.read(&mut buf).ok())
+                .unwrap_or(0);
+            // Copy into data_pool
+            self.data[bufptr..bufptr + n].copy_from_slice(&buf[..n]);
+            a = n as i64;
+        }
+
+        else if op == Opcode::CLOS as i64 {
+            // stack: …, fd
+            let fd = self.stack.pop().unwrap();
+            self.fd_table.remove(&fd);
+            a = 0;
+        }
+
+        else if op == Opcode::PRTF as i64 {
+            // stack: …, arg1, ptr_to_fmt
+            let arg1 = self.stack.pop().unwrap();
+            let fmt_ptr = self.stack.pop().unwrap() as usize;
+            // read the C string
+            let slice = &self.data_pool[fmt_ptr..];
+            let end   = slice.iter().position(|&b| b == 0).unwrap_or(slice.len());
+            let fmt   = String::from_utf8_lossy(&slice[..end]);
+            // replace all "%d" in fmt with the integer
+            let out = fmt.replace("%d", &arg1.to_string());
+            print!("{}", out);
+            a = 0;
+        }
+        
+        
+
+        else if op == Opcode::MALC as i64 {
+            // stack: …, size
+            let size = self.stack.pop().unwrap() as usize;
+            let ptr  = self.heap_alloc.len();
+            self.heap_alloc.resize(ptr + size, 0);
+            a = ptr as i64;
+        }
+
+        else if op == Opcode::FREE as i64 {
+            // stack: …, ptr
+            let _ptr = self.stack.pop().unwrap() as usize;
+            // no-op for our bump allocator
+            a = 0;
+        }
+
+        else if op == Opcode::MSET as i64 {
+            // stack: …, value, size, ptr
+            let size = self.stack.pop().unwrap() as usize;
+            let val  = self.stack.pop().unwrap() as u8;
+            let ptr  = self.stack.pop().unwrap() as usize;
+            self.data_pool[ptr..ptr + size].fill(val);
+            a = ptr as i64;
+        }
+
+        else if op == Opcode::MCMP as i64 {
+            // stack: …, size, p2, p1
+            let size = self.stack.pop().unwrap() as usize;
+            let p2   = self.stack.pop().unwrap() as usize;
+            let p1   = self.stack.pop().unwrap() as usize;
+            let cmp = self.data_pool[p1..p1 + size]
+                .cmp(&self.data_pool[p2..p2 + size]);
+            a = cmp as i64;
+        }
 
         // final exit
         else if op == Opcode::EXIT as i64 {
@@ -1144,12 +1217,12 @@ fn run(&mut self) {
                 println!("exit({}) cycle={}", self.stack.pop().unwrap(), cycle);
             }
             return;
-        }
-        else {
+        } else {
             panic!("Unknown instruction: {}", op);
         }
+
+        }
     }
-}
 
 }
 
