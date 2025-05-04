@@ -39,6 +39,7 @@ C2Rust is a simple compiler and virtual machine for a subset of the C programmin
   ```bash
     cargo run
     
-
+we both had technical issue with testing however we tested everything by logic and by comparison some of the tests failed and some passed
+and in Regards to the bonus we did implment it but the answer is incorrect 
 
 
