@@ -18,6 +18,7 @@ C2Rust is a simple compiler and virtual machine for a subset of the C programmin
 
 ---
 
+
 ## Build Instructions
 1. Clone the repository:
    ```bash
@@ -31,10 +32,13 @@ C2Rust is a simple compiler and virtual machine for a subset of the C programmin
  3. Run test
     ```bash 
     cargo test
-    
- 4. running the compiler
+   in windows terminal
+     ```bash
+    --test
+4. running the compiler
   ```bash
     cargo run
+    
 
 
 
