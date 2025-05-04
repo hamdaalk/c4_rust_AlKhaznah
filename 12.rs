@@ -490,72 +490,145 @@ impl Compiler {
         Ok(())
     }
     fn declaration(&mut self) -> Result<(), String> {
-        // 1) Base type
+        // --- 0) Handle “enum { … }” declarations ---
+        if self.token == Token::Enum {
+            self.next(); // consume `enum`
+    
+            // require opening `{`
+            if self.token != Token::Operator('{') {
+                return Err(format!("{}: expected '{{' after enum", self.line));
+            }
+            self.next(); // consume `{`
+    
+            // counter for enum values
+            let mut i: i64 = 0;
+    
+            // loop until closing `}`
+            while self.token != Token::Operator('}') {
+                // 0a) identifier
+                if self.token != Token::Id {
+                    return Err(format!("{}: bad enum identifier", self.line));
+                }
+                let name = self.ident.clone();
+                self.next(); // consume the identifier
+    
+                // 0b) optional “= number”
+                if self.token == Token::Assign {
+                    self.next(); // consume `=`
+                    if let Token::Num(v) = self.token {
+                        i = v;
+                    } else {
+                        return Err(format!("{}: bad enum initializer", self.line));
+                    }
+                    self.next(); // consume the number
+                }
+    
+                // 0c) insert into symbol table as a numeric constant
+                let hash = name.bytes()
+                    .fold(0u64, |h, b| h.wrapping_mul(31).wrapping_add(b as u64));
+                self.symbols.insert(
+                    name.clone(),
+                    Identifier {
+                        token:  Token::Num(i),
+                        hash,
+                        name:   name.clone(),
+                        class:  Class::Num,
+                        type_:  Type::Int,
+                        value:  i,
+                        hclass: Class::Num,
+                        htype:  Type::Int,
+                        hval:   i,
+                    },
+                );
+                i += 1;
+    
+                // 0d) consume optional comma
+                if self.token == Token::Operator(',') {
+                    self.next();
+                }
+            }
+    
+            // consume the `}`
+            self.next();
+            return Ok(());
+        }
+    
+        // --- 1) Base type ---
         let mut ty = match self.token {
             Token::Int  => { self.next(); Type::Int },
             Token::Char => { self.next(); Type::Char },
             _ => return Err(format!("{}: expected 'int' or 'char'", self.line)),
         };
-        // 2) Pointers
+    
+        // --- 2) Pointer stars ---
         while self.token == Token::Operator('*') {
             self.next();
             ty = Type::Ptr(Box::new(ty.clone()));
         }
-        // 3) Identifier
+    
+        // --- 3) Identifier ---
         let name = self.ident.clone();
         if self.token != Token::Id {
             return Err(format!("{}: identifier expected", self.line));
         }
         // Insert as global by default
-        self.symbols.insert(name.clone(), Identifier {
-            token:  Token::Id,
-            hash:   0,
-            name:   name.clone(),
-            class:  Class::Glo,
-            type_:  ty.clone(),
-            value:  self.data_ptr as i64,
-            hclass: Class::Glo,
-            htype:  ty.clone(),
-            hval:   0,
-        });
+        self.symbols.insert(
+            name.clone(),
+            Identifier {
+                token:  Token::Id,
+                hash:   0,
+                name:   name.clone(),
+                class:  Class::Glo,
+                type_:  ty.clone(),
+                value:  self.data_ptr as i64,
+                hclass: Class::Glo,
+                htype:  ty.clone(),
+                hval:   0,
+            },
+        );
         self.next();
     
-// 4) Function vs. Global
-if self.token == Token::Operator('(') {
-    // 4a) consume the '('
-    self.next();
-
-    // 4b) skip everything up to the matching ')'
-    while self.token != Token::Operator(')') && self.token != Token::EOF {
-        self.next();
-    }
-    // 4c) make sure we found a ')'
-    //if self.token != Token::Operator(')') {
-    //    return Err(format!("{}: expected ')' after parameters", self.line));
-    //}
-    // consume that ')'
-    self.next();
-
-    // 4d) now we must see the opening brace
-    if self.token != Token::Operator('{') {
-        return Err(format!("{}: expected '{{' after function parameters", self.line));
-    }
-
-    // mark this symbol as a function
-    if let Some(id) = self.symbols.get_mut(&name) {
-        id.class = Class::Fun;
-    }
-    // consume the '{' and parse the body
-    self.next();
-    while self.token != Token::Operator('}') && self.token != Token::EOF {
-        self.stmt()?;
-    }
-    // consume the '}'
-    if self.token == Token::Operator('}') {
-        self.next();
-    }
-
-
+        // --- 4) Function vs. Global ---
+        if self.token == Token::Operator('(') {
+            // 4a) consume '(' and balance nested parens
+            let mut depth = 1;
+            self.next(); // eat '('
+            while depth > 0 {
+                match self.token {
+                    Token::Operator('(') => depth += 1,
+                    Token::Operator(')') => depth -= 1,
+                    Token::EOF => {
+                        return Err(format!("{}: unexpected EOF in parameter list", self.line));
+                    }
+                    _ => {}
+                }
+                self.next();
+            }
+    
+            // 4b) require '{'
+            if self.token != Token::Operator('{') {
+                return Err(format!(
+                    "{}: expected '{{' after function parameters",
+                    self.line
+                ));
+            }
+            // mark as function
+            if let Some(id) = self.symbols.get_mut(&name) {
+                id.class = Class::Fun;
+            }
+    
+            // 4c) parse body, requiring a matching '}'
+            self.next(); // consume '{'
+            while self.token != Token::Operator('}') {
+                if self.token == Token::EOF {
+                    return Err(format!(
+                        "{}: expected '}}' at end of function body",
+                        self.line
+                    ));
+                }
+                self.stmt()?;
+            }
+            self.next(); // consume '}'
         } else {
             // global‐variable: expect ';'
             if self.token != Token::Operator(';') {
@@ -572,7 +645,6 @@ if self.token == Token::Operator('(') {
     
         Ok(())
     }
-    
     //----------------------------------------------------------------------------- 
     // 8)  expr & stmt 
     //-----------------------------------------------------------------------------
