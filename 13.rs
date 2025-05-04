@@ -263,6 +263,10 @@ impl Compiler {
     //----------------------------------------------------------------------------- 
     // 6) Tokenizer: next()
     //-----------------------------------------------------------------------------
+/// Advances the tokenizer to the next token in the source code.
+/// - Skips whitespace and comments.
+/// - Identifies and categorizes tokens (e.g., numbers, identifiers, operators).
+/// - Updates the `self.token` field with the current token and its value.
     fn next(&mut self) {
         loop {
     // 1) Skip whitespace & handle newlines
@@ -698,6 +702,9 @@ impl Compiler {
     // 8)  expr & stmt 
     //-----------------------------------------------------------------------------
 /// Parse an expression with precedence-climbing (Pratt) and emit VM code.
+/// - Handles prefix (unary) and primary expressions (e.g., literals, identifiers).
+/// - Processes infix (binary) operators based on their precedence.
+/// - Emits the appropriate VM instructions for the parsed expression.
 fn expr(&mut self, level: i32) -> Result<(), String> {
     // ——— 1) PREFIX / PRIMARY ——————————————
     // We'll need to remember the type of the left‐hand side for assignment.
@@ -970,8 +977,19 @@ while self.token.precedence() >= level {
     Ok(())
 
 }
-    
-    
+   
+/// Parses a statement and emits VM code.
+
+/// - Handles different types of statements, such as:
+///   - Local variable declarations ( `int a;`).
+///   - Control flow statements (`if`, `while`).
+///   - Expression statements ( `a = b + c;`).
+/// - Manages the scope and lifetime of local variables within functions.  
+///implementation 
+////// # Implementation Details
+/// - Skips over local declarations inside functions.
+/// - Parses and emits code for control flow constructs like `if-else` and `while`.
+/// - Ensures proper handling of block scopes and braces.
 fn stmt(&mut self) -> Result<(), String> {
     // —— skip local declarations inside functions —— 
     if self.token == Token::Int || self.token == Token::Char {
