@@ -34,7 +34,7 @@ C2Rust is a simple compiler and virtual machine for a subset of the C programmin
     
  4. running the compiler
   ```bash
-    cargo run 
-![image](https://github.com/user-attachments/assets/e296ca2f-9a35-44ee-9a7d-1a1b5de3894c)
+    cargo run
+
 
 
