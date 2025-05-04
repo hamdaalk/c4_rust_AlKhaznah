@@ -262,27 +262,21 @@ impl Compiler {
     //-----------------------------------------------------------------------------
     fn next(&mut self) {
         loop {
+    // 1) Skip whitespace & handle newlines
             while let Some(ch) = self.peek_char() {
                 if ch == '\n' {
-                     self.next_char();
-                     // consume the '\n'
-                     self.next_char();
+                    // consume exactly one newline
+                    self.next_char();
                     self.line += 1;
                     if self.print_source {
-                         // (you can print the source line here if you like)
-                         // find the bounds of the line we just read
-                         let end = self.position - 1;            // index of the '\n' we just consumed
-                         let mut start = end;
-                         // back up to the previous '\n' (or to 0)
-                         while start > 0 && self.source[start - 1] != '\n' {
-                             start -= 1;
-                         }
-                         // collect characters between start..end into a String
-                         let line_str: String = self.source[start..end]
-                             .iter()
-                             .collect();
-                         // print with line number
-                         println!("{:4} {}", self.line, line_str);
+                        // (optional) print the source line here
+                        let end = self.position - 1; // position of the '\n'
+                        let mut start = end;
+                        while start > 0 && self.source[start - 1] != '\n' {
+                            start -= 1;
+                        }
+                        let line_str: String = self.source[start..end].iter().collect();
+                        println!("{:4} {}", self.line, line_str);
                     }
                     continue;
                 }
@@ -292,21 +286,24 @@ impl Compiler {
                 }
                 break;
             }
-
+    
             // 2) End of input?
             let ch = match self.next_char() {
                 Some(c) => c,
                 None    => { self.token = Token::EOF; return; }
             };
-
+    
             // 3) Preprocessor‐style directive: skip to end of line
             if ch == '#' {
                 while let Some(c2) = self.next_char() {
-                    if c2 == '\n' { break; }
+                    if c2 == '\n' {
+                        self.line += 1;
+                        break;
+                    }
                 }
                 continue;
             }
-
+    
             // 4) Identifier or keyword
             if ch.is_alphabetic() || ch == '_' {
                 let mut id = String::new();
@@ -329,7 +326,6 @@ impl Compiler {
                     "sizeof" => Token::Sizeof,
                     "while"  => Token::While,
                     other    => {
-                        // intern into symbol table if missing
                         let hash = other.bytes()
                             .fold(0u64, |h, b| h.wrapping_mul(31).wrapping_add(b as u64));
                         let entry = self.symbols.entry(other.to_string())
@@ -350,7 +346,6 @@ impl Compiler {
                 };
                 return;
             }
-
             // 5) Number literal (decimal, hex, or octal)
             if ch.is_ascii_digit() {
                 let mut v = (ch as u8 - b'0') as i64;
