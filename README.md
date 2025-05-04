@@ -25,8 +25,8 @@ C2Rust is a simple compiler and virtual machine for a subset of the C programmin
    cd c2rust
 
  2. build project
-    '''bash
-    cargo build
+   cargo build
+  
  4. Run test 
     cargo test
     
